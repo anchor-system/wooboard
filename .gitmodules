@@ -1,0 +1,6 @@
+[submodule "external_libraries/rtmidi"]
+	path = external_libraries/rtmidi
+	url = git@github.com:thestk/rtmidi.git
+[submodule "external_libraries/glfw"]
+	path = external_libraries/glfw
+	url = git@github.com:glfw/glfw.git
