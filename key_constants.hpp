@@ -1,15 +1,15 @@
 #include <map>
-#define KEY_ESC 0x29 // Keyboard ESCAPE
-#define KEY_1 0x1e   // Keyboard 1 and !
-#define KEY_2 0x1f   // Keyboard 2 and @
-#define KEY_3 0x20   // Keyboard 3 and #
-#define KEY_4 0x21   // Keyboard 4 and $
-#define KEY_5 0x22   // Keyboard 5 and %
-#define KEY_6 0x23   // Keyboard 6 and ^
-#define KEY_7 0x24   // Keyboard 7 and &
-#define KEY_8 0x25   // Keyboard 8 and *
-#define KEY_9 0x26   // Keyboard 9 and (
-#define KEY_0 0x27   // Keyboard 0 and )
+#define KEY_ESC 0x29   // Keyboard ESCAPE
+#define KEY_1 0x1e     // Keyboard 1 and !
+#define KEY_2 0x1f     // Keyboard 2 and @
+#define KEY_3 0x20     // Keyboard 3 and #
+#define KEY_4 0x21     // Keyboard 4 and $
+#define KEY_5 0x22     // Keyboard 5 and %
+#define KEY_6 0x23     // Keyboard 6 and ^
+#define KEY_7 0x24     // Keyboard 7 and &
+#define KEY_8 0x25     // Keyboard 8 and *
+#define KEY_9 0x26     // Keyboard 9 and (
+#define KEY_0 0x27     // Keyboard 0 and )
 #define KEY_MINUS 0x2d // Keyboard - and _
 
 #define KEY_TAB 0x2b       // Keyboard Tab
@@ -57,15 +57,9 @@
 
 std::map<int, int> HID_number_row_to_value = {
     {KEY_ESC, 0}, // we map the top left key to 0 to match the regular layout
-    {KEY_1, 1},
-    {KEY_2, 2},
-    {KEY_3, 3},
-    {KEY_4, 4},
-    {KEY_5, 5},
-    {KEY_6, 6},
-    {KEY_7, 7},
-    {KEY_8, 8},
-    {KEY_9, 9},
+    {KEY_1, 1},   {KEY_2, 2},  {KEY_3, 3},      {KEY_4, 4},
+    {KEY_5, 5},   {KEY_6, 6},  {KEY_7, 7},      {KEY_8, 8},
+    {KEY_9, 9},   {KEY_0, 10}, {KEY_MINUS, 11},
 };
 
 std::map<int, int> HID_to_sequential_querty = {
