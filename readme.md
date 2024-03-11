@@ -1,6 +1,6 @@
 # wooboard
 
-![demo](https://img.youtube.com/vi/L3qZYKWTLvg/maxresdefault.jpg)
+[![demo](https://img.youtube.com/vi/L3qZYKWTLvg/maxresdefault.jpg)](https://www.youtube.com/watch?v=L3qZYKWTLvg)
 
 in order to run this program
 - you'll need a wooting analog keyboard
