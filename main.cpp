@@ -6,9 +6,9 @@
 #include <unistd.h>
 
 #include "RtMidi.h"
+#include <cassert>
 #include <cstdlib>
 #include <iostream>
-#include <cassert>
 
 // This function should be embedded in a try/catch block in case of
 // an exception.  It offers the user a choice of MIDI ports to open.
@@ -27,12 +27,19 @@ using wooting_analog_read_full_buffer_t = int (*)(unsigned short *code_buffer,
                                                   float *analog_buffer,
                                                   unsigned int len);
 
+bool global_sustain_mode = false; // bad global
+
 unsigned int microsecond = 1000000;
 
 const int MAX_KEYS_TO_CHECK = 16;
 
-const int NUM_ANALOG_DATA_POINTS_BEFORE_ACTUATION = 20;
-// const int NUM_ANALOG_DATA_POINTS_BEFORE_ACTUATION = 10000;
+float time_until_actuation = 0.016;
+
+// 40 points each with delta time of 0.0004 means that in total we get 40 *
+// 0.0004 = 0.016 of a second
+const int NUM_ANALOG_DATA_POINTS_BEFORE_ACTUATION = 128;
+float time_between_data_collection_seconds =
+    time_until_actuation / (float)NUM_ANALOG_DATA_POINTS_BEFORE_ACTUATION;
 
 bool key_currently_pressed[48] = {false};
 bool actuated_keys[48] = {0};
@@ -85,7 +92,7 @@ int transpose = 3;
 int lowest_note = 60 - 2 * 12 + transpose;
 
 void update_transpose(int new_transpose) {
-    lowest_note = 60 - 2 * 12 + new_transpose;
+  lowest_note = 60 - 2 * 12 + new_transpose;
 }
 
 int convert_key_to_note(int pressed_key) { return lowest_note + pressed_key; }
@@ -94,13 +101,13 @@ int convert_key_to_note(int pressed_key) { return lowest_note + pressed_key; }
  * \note this only turns off notes in the range 0 to 127
  */
 void turn_off_all_midi_notes() {
-    for (int i = 0; i < 127; i ++) {
-        // Note Off: 128, 64, 40
-        message[0] = 128; // off
-        message[1] = i;
-        message[2] = 40; // vel
-        midiout->sendMessage(&message);
-    }
+  for (int i = 0; i < 127; i++) {
+    // Note Off: 128, 64, 40
+    message[0] = 128; // off
+    message[1] = i;
+    message[2] = 40; // vel
+    midiout->sendMessage(&message);
+  }
 }
 
 void play_just_actuated_notes(bool actuated_keys[48],
@@ -119,11 +126,13 @@ void play_just_actuated_notes(bool actuated_keys[48],
       midiout->sendMessage(&message);
     }
     if (previous_tick_actuated_keys[i] && !actuated_keys[i]) {
-      // Note Off: 128, 64, 40
-      message[0] = 128; // off
-      message[1] = note;
-      message[2] = 40; // vel
-      midiout->sendMessage(&message);
+      if (!global_sustain_mode) {
+        // Note Off: 128, 64, 40
+        message[0] = 128; // off
+        message[1] = note;
+        message[2] = 40; // vel
+        midiout->sendMessage(&message);
+      }
     }
   }
   //    printf("ending note batch\n\n");
@@ -134,8 +143,8 @@ void play_just_actuated_notes(bool actuated_keys[48],
  * @param set_b
  * @return true iff set_a is a subset of set_b
  */
-bool subset(const std::set<int>& set_a, const std::set<int>& set_b) {
-    return std::includes(set_b.begin(), set_b.end(), set_a.begin(), set_a.end());
+bool subset(const std::set<int> &set_a, const std::set<int> &set_b) {
+  return std::includes(set_b.begin(), set_b.end(), set_a.begin(), set_a.end());
 }
 
 /**
@@ -144,37 +153,55 @@ bool subset(const std::set<int>& set_a, const std::set<int>& set_b) {
  * @param result an empty set which will contain the result of taking A \ B
  * A \ B is a set containing the elements of set_a which are not in set_b
  */
-void difference(const std::set<int>& set_a, const std::set<int>& set_b, std::set<int> *result) {
-    std::set_difference( set_a.begin(), set_a.end(), set_b.begin(), set_b.end(),
-                    std::inserter(*result, result->end()));
+void difference(const std::set<int> &set_a, const std::set<int> &set_b,
+                std::set<int> *result) {
+  std::set_difference(set_a.begin(), set_a.end(), set_b.begin(), set_b.end(),
+                      std::inserter(*result, result->end()));
 }
 
-void print_set(const std::set<int>& set) {
-    printf("set contents:\n");
-    for (int j : set) {
-        printf("%d ", j);
-    }
-    printf("\n");
+void print_set(const std::set<int> &set) {
+  printf("set contents:\n");
+  for (int j : set) {
+    printf("%d ", j);
+  }
+  printf("\n");
 }
 
+void process_commands(std::set<int> HID_keys_pressed) {
 
-void process_commands(std::set<int> HID_keys_pressed){
-    if (HID_keys_pressed.size() == 3) {
-        std::set<int> transpose_command = {KEY_SPACE, KEY_T};
-        if (subset(transpose_command, HID_keys_pressed)) {
-            std::set<int> other_keys;
-            difference(HID_keys_pressed, transpose_command, &other_keys);
-            assert(other_keys.size() == 1);
-            int transpose_key = *other_keys.begin();
-            bool invalid_transpose_key = HID_number_row_to_value.find(transpose_key) == HID_number_row_to_value.end();
-            if (not invalid_transpose_key) {
-                // global variable, this is bad.
-                update_transpose(HID_number_row_to_value[transpose_key]);
-                turn_off_all_midi_notes();
-            }
-        }
+  std::set<int> transpose_command = {KEY_SPACE, KEY_T};
+  std::set<int> sustain_mode_on = {KEY_SPACE};
+  std::set<int> sustain_mode_off = {KEY_LEFTSHIFT, KEY_SPACE};
 
+  if (HID_keys_pressed.size() == 1) {
+    int pressed_key = *HID_keys_pressed.begin();
+    if (pressed_key == KEY_SPACE) {
+      global_sustain_mode = true;
     }
+  }
+
+  if (HID_keys_pressed.size() == 2) { // redundant
+    if (HID_keys_pressed == sustain_mode_off) {
+      global_sustain_mode = false;
+    }
+  }
+
+  if (HID_keys_pressed.size() == 3) {
+    if (subset(transpose_command, HID_keys_pressed)) {
+      std::set<int> other_keys;
+      difference(HID_keys_pressed, transpose_command, &other_keys);
+      assert(other_keys.size() == 1);
+      int transpose_key = *other_keys.begin();
+      bool invalid_transpose_key =
+          HID_number_row_to_value.find(transpose_key) ==
+          HID_number_row_to_value.end();
+      if (not invalid_transpose_key) {
+        // global variable, this is bad.
+        update_transpose(HID_number_row_to_value[transpose_key]);
+        turn_off_all_midi_notes();
+      }
+    }
+  }
 }
 
 int main() {
@@ -237,8 +264,10 @@ int main() {
     // the code buffer stores all the keys that are currently pressed
     // the analog buffer stores how depressed the key is
     // they are both indexed in the same fashion
-    const int num_keys_pressed = read_full_buffer(code_buffer, analog_buffer, MAX_KEYS_TO_CHECK);
-    bool got_key_press = num_keys_pressed >= 0 && num_keys_pressed < MAX_KEYS_TO_CHECK;
+    const int num_keys_pressed =
+        read_full_buffer(code_buffer, analog_buffer, MAX_KEYS_TO_CHECK);
+    bool got_key_press =
+        num_keys_pressed >= 0 && num_keys_pressed < MAX_KEYS_TO_CHECK;
 
     clear_keys_pressed(key_currently_pressed);
     // skn: sequential key number
@@ -246,7 +275,8 @@ int main() {
     std::set<int> HID_keys_pressed;
 
     if (got_key_press) {
-      for (int i = 0; i < num_keys_pressed; i++) { // keep going until you find the right key
+      for (int i = 0; i < num_keys_pressed;
+           i++) { // keep going until you find the right key
 
         int HID_key_code = code_buffer[i];
         HID_keys_pressed.insert(HID_key_code);
@@ -266,55 +296,72 @@ int main() {
         }
 
         key_currently_pressed[sequential_key_number] = true;
-        int num_analog_data_points_collected = analog_data_points_collected[sequential_key_number];
+        int num_analog_data_points_collected =
+            analog_data_points_collected[sequential_key_number];
 
-        if (num_analog_data_points_collected < NUM_ANALOG_DATA_POINTS_BEFORE_ACTUATION) {
-            analog_data_points[sequential_key_number][num_analog_data_points_collected] = key_depression;
-            analog_data_points_collected[sequential_key_number] += 1;
+        if (num_analog_data_points_collected <
+            NUM_ANALOG_DATA_POINTS_BEFORE_ACTUATION) {
+          analog_data_points[sequential_key_number]
+                            [num_analog_data_points_collected] = key_depression;
+          analog_data_points_collected[sequential_key_number] += 1;
         } else { // collected enough datapoints, start actuation
 
-            assert(analog_data_points_collected[sequential_key_number] == NUM_ANALOG_DATA_POINTS_BEFORE_ACTUATION);
+          assert(analog_data_points_collected[sequential_key_number] ==
+                 NUM_ANALOG_DATA_POINTS_BEFORE_ACTUATION);
 
-            actuated_keys[sequential_key_number] = true;
-            just_actuated_keys[sequential_key_number] = true;
+          actuated_keys[sequential_key_number] = true;
+          just_actuated_keys[sequential_key_number] = true;
 
-            float *max_depression_ptr = std::max_element(analog_data_points[sequential_key_number], analog_data_points[sequential_key_number] + NUM_ANALOG_DATA_POINTS_BEFORE_ACTUATION);
-            float max_depression = *max_depression_ptr;
-            int index_max_acheived = std::distance(analog_data_points[sequential_key_number], max_depression_ptr);
-            int plus_one_index = index_max_acheived + 1;
+          float *max_depression_ptr =
+              std::max_element(analog_data_points[sequential_key_number],
+                               analog_data_points[sequential_key_number] +
+                                   NUM_ANALOG_DATA_POINTS_BEFORE_ACTUATION);
+          float max_depression = *max_depression_ptr;
+          int index_max_acheived = std::distance(
+              analog_data_points[sequential_key_number], max_depression_ptr);
+          int plus_one_index = index_max_acheived + 1;
 
-            float average_speed = max_depression / (float) plus_one_index;
+          float average_speed = max_depression / (float)plus_one_index;
+          float scaled_speed = average_speed * 1000; // make it
 
-            float scaled_speed = average_speed * 1000; // make it
+          float avg_depression = 0.0;
+          for (int j = 0; j < plus_one_index; j++) {
+            avg_depression += analog_data_points[sequential_key_number][j];
+          }
+          avg_depression = avg_depression / (float)plus_one_index;
+          // in practice this number is between 0.1 and 0.6 so to map 0.6 to 127
+          // we need 127 / 0.6 = 211.6666, but that's too loud, tried 200
+          scaled_speed = avg_depression * 200;
 
-            speed[sequential_key_number] = scaled_speed;
+          speed[sequential_key_number] = scaled_speed;
 
-            if (speed[sequential_key_number] > 127) {
-                speed[sequential_key_number] = 127;
-            }
+          if (speed[sequential_key_number] > 127) {
+            speed[sequential_key_number] = 127;
+          }
 
-
-//            int max_velocity = 127;
-//
-//            float avg_speed = 0.0;
-//            for (int j = 0; j < NUM_ANALOG_DATA_POINTS_BEFORE_ACTUATION; j++) {
-//                avg_speed += analog_data_points[sequential_key_number][j];
-//            }
-//
-//            avg_speed /= (float)NUM_ANALOG_DATA_POINTS_BEFORE_ACTUATION;
-//            speed[sequential_key_number] = avg_speed * max_velocity;
-//
-//            speed[sequential_key_number] *= 1.5;
-//
-//            if (speed[sequential_key_number] > 127) {
-//                speed[sequential_key_number] = 127;
-//            }
-
+          //            int max_velocity = 127;
+          //
+          //            float avg_speed = 0.0;
+          //            for (int j = 0; j <
+          //            NUM_ANALOG_DATA_POINTS_BEFORE_ACTUATION; j++) {
+          //                avg_speed +=
+          //                analog_data_points[sequential_key_number][j];
+          //            }
+          //
+          //            avg_speed /=
+          //            (float)NUM_ANALOG_DATA_POINTS_BEFORE_ACTUATION;
+          //            speed[sequential_key_number] = avg_speed * max_velocity;
+          //
+          //            speed[sequential_key_number] *= 1.5;
+          //
+          //            if (speed[sequential_key_number] > 127) {
+          //                speed[sequential_key_number] = 127;
+          //            }
         }
 
-//         printf("skn: %d apc: %d, actutated: %d \n", sequential_key_number,
-//         num_analog_data_points_collected,
-//         actuated_keys[sequential_key_number]);
+        //         printf("skn: %d apc: %d, actutated: %d \n",
+        //         sequential_key_number, num_analog_data_points_collected,
+        //         actuated_keys[sequential_key_number]);
 
         // std::cout << sequential_key_mapping << ": " << analog_buffer[i] <<
         // "\n";
@@ -325,7 +372,6 @@ int main() {
 
       // process any commands
       process_commands(HID_keys_pressed);
-
     }
 
     std::set<int> skns_to_be_unactuated;
@@ -336,8 +382,8 @@ int main() {
         set_of_skn.end(),
         std::inserter(skns_to_be_unactuated, skns_to_be_unactuated.end()));
 
-//    print_actuated_key_info();
-
+    // print_actuated_key_info();
+    // print_actuated_key_info();
     // printf("num pressed keys %d \n", set_of_skn.size());
     // printf("num prev keys %d \n", prev_set_of_skn.size());
     // printf("num to be de-ac keys %d \n", skns_to_be_unactuated.size());
@@ -355,7 +401,9 @@ int main() {
     prev_set_of_skn = set_of_skn;
     update_previously_actuated_keys(actuated_keys, previous_tick_actuated_keys);
 
-    usleep(0.0008 * microsecond); // sleep so that when we collect datapoints there is spacing
+    usleep(time_between_data_collection_seconds *
+           microsecond); // sleep so that when we collect datapoints
+                         // there is spacing
   }
 
   return 0;
